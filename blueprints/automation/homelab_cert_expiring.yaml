@@ -1,0 +1,260 @@
+blueprint:
+  name: Homelab Certificates — Expiring Soon
+  description: >-
+    Alerts when the homelab-cert-renewer `cert-monitor` reports an expiring, expired or unreadable
+    mTLS certificate (`binary_sensor.homelab_certificates_expiring_soon`), escalates when a new problem
+    appears while an alert is already active, reminds daily while the problem persists, and acts as a
+    dead-man switch when the monitor itself is unavailable. Inside `notify_actions` use
+    `{{ alert_title }}` and `{{ alert_message }}`.
+  domain: automation
+  author: homelab-cert-renewer
+  source_url: https://github.com/Shibalba/homelab-cert-renewer/blob/main/blueprints/automation/homelab_cert_expiring.yaml
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    cert_problem_sensor:
+      name: Certificate problem sensor
+      description: Aggregated `Expiring Soon` binary sensor published by cert-monitor.
+      default: binary_sensor.homelab_certificates_expiring_soon
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+              device_class: problem
+    for_duration:
+      name: Alert delay
+      description: How long the sensor must stay `on` before the first alert.
+      default:
+        hours: 0
+        minutes: 5
+        seconds: 0
+      selector:
+        duration: {}
+    reminder_time:
+      name: Daily reminder time
+      description: Daily reminder while the problem stays active (skipped if it started less than an hour ago).
+      default: "10:00:00"
+      selector:
+        time: {}
+    enable_persistent_notification:
+      name: Persistent notification
+      description: Create a Home Assistant persistent notification and dismiss it automatically on recovery.
+      default: true
+      selector:
+        boolean: {}
+    notification_title:
+      name: Notification title
+      default: "⚠️ Истекает mTLS-сертификат Homelab"
+      selector:
+        text: {}
+    enable_stale_alert:
+      name: Monitor unavailable alert
+      description: Alert when the sensor stays `unavailable`/`unknown` (cert-monitor, Pi or MQTT broker down).
+      default: true
+      selector:
+        boolean: {}
+    stale_duration:
+      name: Monitor unavailable delay
+      default:
+        hours: 2
+        minutes: 0
+        seconds: 0
+      selector:
+        duration: {}
+    notify_actions:
+      name: Notification actions
+      description: >-
+        Actions to send the alert (e.g. `telegram_bot.send_message`, `notify.mobile_app_*`).
+        Variables `alert_title` and `alert_message` are available.
+      default: []
+      selector:
+        action: {}
+
+mode: queued
+max: 5
+
+variables:
+  cert_problem_sensor: !input cert_problem_sensor
+  enable_persistent_notification: !input enable_persistent_notification
+  enable_stale_alert: !input enable_stale_alert
+  notification_title: !input notification_title
+  reminder_min_active_sec: 3600
+
+triggers:
+  - trigger: state
+    id: expiring
+    entity_id: !input cert_problem_sensor
+    to: "on"
+    not_from:
+      - unavailable
+      - unknown
+    for: !input for_duration
+  - trigger: state
+    id: escalated
+    entity_id: !input cert_problem_sensor
+    attribute: expiring_count
+  - trigger: time
+    id: reminder
+    at: !input reminder_time
+  - trigger: state
+    id: recovered
+    entity_id: !input cert_problem_sensor
+    to: "off"
+    for:
+      minutes: 1
+  - trigger: state
+    id: stale
+    entity_id: !input cert_problem_sensor
+    to:
+      - unavailable
+      - unknown
+    for: !input stale_duration
+  - trigger: state
+    id: monitor_back
+    entity_id: !input cert_problem_sensor
+    from:
+      - unavailable
+      - unknown
+    to:
+      - "on"
+      - "off"
+
+actions:
+  - choose:
+      - alias: Recovered — dismiss expiry notification
+        conditions:
+          - condition: template
+            value_template: "{{ trigger.id is defined and trigger.id == 'recovered' }}"
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ enable_persistent_notification }}"
+            then:
+              - action: persistent_notification.dismiss
+                data:
+                  notification_id: homelab_certs_expiring
+
+      - alias: Monitor back online — dismiss stale notification
+        conditions:
+          - condition: template
+            value_template: "{{ trigger.id is defined and trigger.id == 'monitor_back' }}"
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ enable_persistent_notification }}"
+            then:
+              - action: persistent_notification.dismiss
+                data:
+                  notification_id: homelab_certs_monitor_stale
+
+      - alias: Monitor unavailable — dead-man switch
+        conditions:
+          - condition: template
+            value_template: "{{ trigger.id is defined and trigger.id == 'stale' and enable_stale_alert }}"
+        sequence:
+          - variables:
+              alert_title: "⚠️ Монитор сертификатов Homelab недоступен"
+              alert_message: >-
+                {{ cert_problem_sensor }} в состоянии {{ states(cert_problem_sensor) }} дольше заданного времени.
+                Сроки сертификатов сейчас не отслеживаются. Возможные причины: упал cert-monitor@<user>.service,
+                недоступен Raspberry Pi, недоступен Mosquitto или истёк его сертификат, истёк клиентский
+                сертификат cert_monitor. Проверьте: systemctl status 'cert-monitor@*',
+                journalctl -u 'cert-monitor@*' -n 50.
+          - if:
+              - condition: template
+                value_template: "{{ enable_persistent_notification }}"
+            then:
+              - action: persistent_notification.create
+                data:
+                  notification_id: homelab_certs_monitor_stale
+                  title: "{{ alert_title }}"
+                  message: "{{ alert_message }}"
+          - choose: []
+            default: !input notify_actions
+
+      - alias: Expiring / escalated / reminder / manual run
+        conditions:
+          - condition: template
+            value_template: >-
+              {%- set tid = trigger.id if trigger.id is defined else none -%}
+              {%- if tid is none -%}
+                true
+              {%- elif tid == 'expiring' -%}
+                true
+              {%- elif tid == 'escalated' -%}
+                {{ trigger.from_state is not none and trigger.to_state is not none
+                   and trigger.from_state.state == 'on' and trigger.to_state.state == 'on'
+                   and (trigger.to_state.attributes.expiring_count | int(0))
+                       > (trigger.from_state.attributes.expiring_count | int(0)) }}
+              {%- elif tid == 'reminder' -%}
+                {%- set st = expand(cert_problem_sensor) | first | default(none) -%}
+                {{ st is not none and st.state == 'on'
+                   and (as_timestamp(now()) - as_timestamp(st.last_changed)) > reminder_min_active_sec }}
+              {%- else -%}
+                false
+              {%- endif -%}
+        sequence:
+          - variables:
+              alert_kind: >-
+                {%- if trigger.id is not defined -%}manual
+                {%- else -%}{{ trigger.id }}{%- endif -%}
+              has_problem: >-
+                {%- set count = state_attr(cert_problem_sensor, 'profiles_count') -%}
+                {{ (state_attr(cert_problem_sensor, 'expiring') or []) | count > 0
+                   or (state_attr(cert_problem_sensor, 'unreadable') or []) | count > 0
+                   or (count is not none and count | int(-1) == 0) }}
+              alert_title: >-
+                {%- if has_problem -%}{{ notification_title }}
+                {%- else -%}✅ Homelab Certificates — тестовая проверка{%- endif -%}
+              alert_message: >-
+                {%- set expiring = state_attr(cert_problem_sensor, 'expiring') or [] -%}
+                {%- set unreadable = state_attr(cert_problem_sensor, 'unreadable') or [] -%}
+                {%- set all_certs = state_attr(cert_problem_sensor, 'all_certs') or {} -%}
+                {%- set threshold = state_attr(cert_problem_sensor, 'threshold_days') -%}
+                {%- set count = state_attr(cert_problem_sensor, 'profiles_count') -%}
+                {%- set reasons = {
+                  'missing': 'файл сертификата не найден',
+                  'parse_error': 'не удалось прочитать сертификат',
+                  'no_cert_path': 'в override.conf нет CERT_PATH'
+                } -%}
+                {%- set ns = namespace(lines=[]) -%}
+                {%- if alert_kind == 'escalated' -%}
+                  {%- set ns.lines = ns.lines + ['Добавилась новая проблема.'] -%}
+                {%- elif alert_kind == 'reminder' -%}
+                  {%- set ns.lines = ns.lines + ['Напоминание: проблема всё ещё активна.'] -%}
+                {%- endif -%}
+                {%- if has_problem -%}
+                  {%- for c in expiring -%}
+                    {%- if c.expired -%}
+                      {%- set ns.lines = ns.lines + ['• ' ~ c.name ~ ': ИСТЁК — нужен перевыпуск через scripts/issue-cert.sh (step ca renew просроченный сертификат не продлит)'] -%}
+                    {%- else -%}
+                      {%- set ns.lines = ns.lines + ['• ' ~ c.name ~ ': осталось ' ~ c.days_left ~ ' д. (порог ' ~ threshold ~ ' д.)'] -%}
+                    {%- endif -%}
+                  {%- endfor -%}
+                  {%- for c in unreadable -%}
+                    {%- set ns.lines = ns.lines + ['• ' ~ c.name ~ ': ' ~ reasons.get(c.reason, c.reason)] -%}
+                  {%- endfor -%}
+                  {%- if count is not none and count | int(-1) == 0 -%}
+                    {%- set ns.lines = ns.lines + ['• cert-monitor не нашёл ни одного профиля — проверьте SYSTEMD_DIR и включённые cert-renewer@*.timer'] -%}
+                  {%- endif -%}
+                  {%- set ns.lines = ns.lines + ["Проверьте: systemctl list-timers 'cert-renewer@*', journalctl -u cert-renewer@<name>, доступность step.local:9000."] -%}
+                {%- elif all_certs | count > 0 -%}
+                  {%- set ns.lines = ns.lines + ['Тестовая проверка: проблем нет. Текущие сроки:'] -%}
+                  {%- for slug, c in all_certs.items() | sort -%}
+                    {%- set ns.lines = ns.lines + ['• ' ~ c.name ~ ': ' ~ (c.days_left ~ ' д.' if c.days_left is not none else 'нет данных')] -%}
+                  {%- endfor -%}
+                {%- else -%}
+                  {%- set ns.lines = ns.lines + ['Нет данных от cert-monitor (' ~ cert_problem_sensor ~ ' = ' ~ states(cert_problem_sensor) ~ ').'] -%}
+                {%- endif -%}
+                {{ ns.lines | join('\n') }}
+          - if:
+              - condition: template
+                value_template: "{{ enable_persistent_notification and has_problem }}"
+            then:
+              - action: persistent_notification.create
+                data:
+                  notification_id: homelab_certs_expiring
+                  title: "{{ alert_title }}"
+                  message: "{{ alert_message }}"
+          - choose: []
+            default: !input notify_actions

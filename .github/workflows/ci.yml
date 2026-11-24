@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check LF line endings
+        run: |
+          if grep -rn $'\r' systemd/ profiles/ scripts/ src/ tests/ config/ blueprints/ .github/ .gitattributes .gitignore pyproject.toml README.md LICENSE; then
+            echo "CRLF line endings detected!"
+            exit 1
+          fi
+
+      - name: Check no secrets or cert files committed
+        run: |
+          if find . -not -path './.git/*' \( -name '*.key' -o -name '*.crt' -o -name '*.pem' -o -name '*.csr' \) | grep -q .; then
+            echo "Certificate or key file found in repository!"
+            exit 1
+          fi
+          if grep -rnE --exclude-dir=.git 'BEGIN ([A-Z]+ )?PRIVATE KEY' .; then
+            echo "Private key material found in repository!"
+            exit 1
+          fi
+
+      - name: Run shellcheck
+        run: shellcheck scripts/*.sh
+
+      - name: Verify systemd unit syntax
+        run: |
+          sudo install -d -m 0755 /etc/systemd/system/cert-renewer@ci-test.service.d /etc/systemd/system/cert-renewer@ci-test.timer.d /opt/homelab-cert-renewer/.venv/bin
+          sudo install -m 0644 systemd/cert-renewer@.service /etc/systemd/system/cert-renewer@.service
+          sudo install -m 0644 systemd/cert-renewer@.timer /etc/systemd/system/cert-renewer@.timer
+          sudo install -m 0644 systemd/cert-monitor@.service /etc/systemd/system/cert-monitor@.service
+          sed -e "s|@SERVICE_USER@|runner|g" -e "s|@SERVICE_HOME@|/home/runner|g" profiles/rpi-stats/service.conf | sudo tee /etc/systemd/system/cert-renewer@ci-test.service.d/override.conf >/dev/null
+          sudo install -m 0644 profiles/zigbee2mqtt/timer.conf /etc/systemd/system/cert-renewer@ci-test.timer.d/override.conf
+          if [[ ! -e /usr/bin/step ]]; then
+            printf '#!/bin/sh\nexit 0\n' | sudo tee /usr/bin/step >/dev/null
+            sudo chmod 0755 /usr/bin/step
+          fi
+          printf '#!/bin/sh\nexit 0\n' | sudo tee /opt/homelab-cert-renewer/.venv/bin/python >/dev/null
+          sudo chmod 0755 /opt/homelab-cert-renewer/.venv/bin/python
+          systemd-analyze verify cert-renewer@ci-test.service cert-renewer@ci-test.timer cert-monitor@ci-test.service
+
+  python-monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --group dev
+
+      - name: Ruff format and lint
+        run: |
+          uv run ruff format --check src tests
+          uv run ruff check src tests
+
+      - name: Run pytest
+        run: uv run pytest -v -W error::DeprecationWarning
+
+      - name: Audit locked dependencies
+        run: uv audit --locked

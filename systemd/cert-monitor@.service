@@ -1,0 +1,17 @@
+[Unit]
+Description=Homelab certificate expiry MQTT monitor for user %i
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+ExecStart=/opt/homelab-cert-renewer/.venv/bin/python /opt/homelab-cert-renewer/src/cert_monitor.py
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

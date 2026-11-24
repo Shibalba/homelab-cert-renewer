@@ -1,0 +1,22 @@
+# Secrets, certificates, backups, and runtime state
+*.key
+*.crt
+*.pem
+*.csr
+*.bak
+*.bak.*
+*.env
+state.json
+
+# Python / uv / tooling caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS & editor artifacts
+.DS_Store
+Thumbs.db

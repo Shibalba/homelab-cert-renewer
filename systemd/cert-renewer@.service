@@ -1,0 +1,11 @@
+[Unit]
+Description=Smallstep certificate renewer for %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=STEP_CA_URL=https://step.local:9000
+Environment=STEP_ROOT_CA=/etc/step/root_ca.crt
+ExecCondition=/usr/bin/step certificate needs-renewal ${CERT_PATH} --expires-in 33%
+ExecStart=/usr/bin/step ca renew --force --ca-url ${STEP_CA_URL} --root ${STEP_ROOT_CA} ${CERT_PATH} ${KEY_PATH}

@@ -1,0 +1,96 @@
+[project]
+name = "homelab-cert-renewer"
+version = "0.1.0"
+description = "Smallstep systemd certificate auto-renewer with optional MQTT expiry monitor for Home Assistant"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "paho-mqtt>=2.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pyyaml>=6.0.4",
+    "ruff>=0.17.6",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+
+[tool.ruff.format]
+quote-style = "single"
+
+
+[tool.ruff.lint]
+select = [
+    "A",      # flake8-builtins
+    "ANN",    # flake8-annotations
+    "ARG",    # flake8-unused-arguments
+    "B",      # flake8-bugbear
+    "BLE",    # flake8-blind-except
+    "C4",     # flake8-comprehensions
+    "C90",    # mccabe
+    "D",      # pydocstyle
+    "DTZ",    # flake8-datetimez
+    "E",      # pycodestyle errors
+    "ERA",    # eradicate
+    "EXE",    # flake8-executable
+    "F",      # pyflakes
+    "FA",     # flake8-future-annotations
+    "FBT",    # flake8-boolean-trap
+    "FLY",    # flynt
+    "FURB",   # refurb
+    "G",      # flake8-logging-format
+    "I",      # isort
+    "ICN",    # flake8-import-conventions
+    "ISC",    # flake8-implicit-str-concat
+    "LOG",    # flake8-logging
+    "N",      # pep8-naming
+    "PERF",   # Perflint
+    "PGH",    # pygrep-hooks
+    "PIE",    # flake8-pie
+    "PL",     # pylint
+    "PT",     # flake8-pytest-style
+    "PTH",    # flake8-use-pathlib
+    "RET",    # flake8-return
+    "RSE",    # flake8-raise
+    "RUF",    # ruff-specific rules
+    "S",      # flake8-bandit
+    "SIM",    # flake8-simplify
+    "SLF",    # flake8-self
+    "SLOT",   # flake8-slots
+    "T10",    # flake8-debugger
+    "T20",    # flake8-print
+    "TC",     # flake8-type-checking
+    "TID",    # flake8-tidy-imports
+    "TRY002", # raise-vanilla-class
+    "TRY004", # type-check-without-type-error
+    "TRY201", # verbose-raise
+    "TRY203", # useless-try-except
+    "TRY401", # verbose-log-message
+    "UP",     # pyupgrade
+    "W",      # pycodestyle warnings
+    "YTT",    # flake8-2020
+]
+ignore = ["ISC001"] # Avoid conflict with ruff format
+
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = [
+    "D",       # Docstrings not required for test functions
+    "FBT",     # Test fakes mirror third-party positional bool signatures & monkeypatch.setitem
+    "PLR2004", # Magic numeric expectations in test assertions
+    "S101",    # pytest uses assert statements
+    "SLF001",  # Tests reset/inspect private module/client state
+]
