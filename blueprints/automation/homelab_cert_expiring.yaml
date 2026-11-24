@@ -213,7 +213,8 @@ actions:
           - variables:
               alert_title: "⚠️ Монитор сертификатов Homelab недоступен"
               alert_message: >-
-                {{ cert_problem_sensor }} в состоянии {{ states(cert_problem_sensor) }} дольше заданного времени.
+                Сенсор «{{ state_attr(cert_problem_sensor, 'friendly_name') or cert_problem_sensor }}»
+                недоступен ({{ states(cert_problem_sensor) }}) дольше {{ (stale_duration_sec | int(0) / 60) | round(0) | int }} мин.
                 Сроки сертификатов сейчас не отслеживаются. Возможные причины: упал cert-monitor@<user>.service,
                 недоступен Raspberry Pi, недоступен Mosquitto или истёк его сертификат, истёк клиентский
                 сертификат cert_monitor. Проверьте: systemctl status 'cert-monitor@*',
@@ -226,7 +227,8 @@ actions:
                 data:
                   notification_id: homelab_certs_monitor_stale
                   title: "{{ alert_title }}"
-                  message: "{{ alert_message }}"
+                  # Persistent notifications render Markdown: escape '*' so 'cert-renewer@*' is not italicised.
+                  message: '{{ alert_message | replace("*", "\\*") }}'
           - choose: []
             default: !input notify_actions
 
@@ -313,6 +315,7 @@ actions:
                 data:
                   notification_id: homelab_certs_expiring
                   title: "{{ alert_title }}"
-                  message: "{{ alert_message }}"
+                  # Persistent notifications render Markdown: escape '*' so 'cert-renewer@*' is not italicised.
+                  message: '{{ alert_message | replace("*", "\\*") }}'
           - choose: []
             default: !input notify_actions

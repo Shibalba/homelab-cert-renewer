@@ -821,4 +821,6 @@ def test_blueprint_triggers_and_manual_run_branch() -> None:
     # Manual "Run actions" passes trigger={'platform': None}, so the branch must key off a missing trigger.id.
     assert 'trigger is not defined' not in text
     assert 'trigger.id is not defined' in text
+    # Persistent notifications render Markdown: both alert notifications must escape '*' ('cert-renewer@*').
+    assert text.count('message: \'{{ alert_message | replace("*", "\\\\*") }}\'') == 2
     assert '\r' not in text
