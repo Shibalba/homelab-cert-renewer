@@ -150,7 +150,9 @@ Inside `notify_actions` use `{{ alert_title }}` and `{{ alert_message }}`, e.g.:
 
 **Install:** for a public repository use **Settings → Automations & scenes → Blueprints → Import Blueprint** with the GitHub URL of the file (updates via **Re-import blueprint**). For a private repository copy the file to `/config/blueprints/automation/homelab-cert-renewer/homelab_cert_expiring.yaml` on the Home Assistant host and reload automations.
 
-### Optional dynamic dashboard card (`auto-entities` from HACS)
+### Optional dynamic dashboard card (`auto-entities` + `template-entity-row` from HACS)
+
+Requires the HACS frontend cards [`auto-entities`](https://github.com/thomasloven/lovelace-auto-entities) and [`template-entity-row`](https://github.com/thomasloven/lovelace-template-entity-row) (both by Thomas Lovén). New profiles appear in the lower block automatically, sorted by remaining days (soonest first), shown as short names such as `RPi Stats  29.7 д.` instead of `Homelab Certificates RPi Stats Cert Days Left  29d 16h`.
 
 ```yaml
 type: vertical-stack
@@ -173,10 +175,21 @@ cards:
       include:
         - device: Homelab Certificates
           entity_id: "sensor.*_days_left"
+          options:
+            type: custom:template-entity-row
+            entity: this.entity_id
+            icon: mdi:certificate-outline
+            name: >-
+              {{ state_attr(config.entity, 'friendly_name')
+                 | replace('Homelab Certificates ', '')
+                 | replace(' Cert Days Left', '') }}
+            state: "{{ states(config.entity) | float(0) | round(1) }} д."
     sort:
       method: state
       numeric: true
 ```
+
+`options` must sit inside the `include` rule (next to `device:` / `entity_id:`), not at card level, otherwise `auto-entities` ignores it. Without `template-entity-row`, drop the `options` block to get the default rows.
 
 ## Verification
 
