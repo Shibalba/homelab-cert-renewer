@@ -125,10 +125,18 @@ It becomes `unavailable` when the daemon goes offline (LWT / `expire_after`). At
 | `expiring` | `off → on`, held for `for_duration` (default 5 min); ignored after `unavailable/unknown` (HA or monitor restarts) | Persistent notification + `notify_actions` |
 | `escalated` | `expiring_count` grows while already `on` | Same, prefixed with "new problem" |
 | `reminder` | Daily at `reminder_time` (default `10:00`) while `on` for more than 1h | Same, prefixed with "reminder" |
-| `recovered` | `on → off` for 1 min | Silently dismisses the persistent notification |
+| `recovered` | `on → off` for 1 min | No Telegram message; the notification is handled per `recovery_notification` (below) |
 | `stale` | `unavailable/unknown` for `stale_duration` (default 2h) — dead-man switch | Separate persistent notification + `notify_actions` |
-| `monitor_back` | Back from `unavailable/unknown` | Silently dismisses the stale notification |
+| `monitor_back` | Back from `unavailable/unknown` | No Telegram message; the stale notification is handled per `recovery_notification` |
 | manual **Run actions** | — | Test summary of all certificates via `notify_actions` (no persistent notification) |
+
+Alerts land in the Home Assistant notification center (**Settings → Notifications**). `recovery_notification` controls what happens there when the problem clears:
+
+- `keep` (default) — leave the alert until you press **Dismiss**;
+- `resolve` — replace its text with "✅ resolved at …" plus current expiry days, still kept until **Dismiss** (for `monitor_back` only when a stale alert was actually raised, so HA restarts do not create notifications);
+- `dismiss` — remove it automatically.
+
+Daily reminders and escalations re-create the notification if you dismissed it while the problem is still active.
 
 Inside `notify_actions` use `{{ alert_title }}` and `{{ alert_message }}`, e.g.:
 

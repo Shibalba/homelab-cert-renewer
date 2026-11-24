@@ -38,10 +38,25 @@ blueprint:
         time: {}
     enable_persistent_notification:
       name: Persistent notification
-      description: Create a Home Assistant persistent notification and dismiss it automatically on recovery.
+      description: Show the alert in the Home Assistant notification center (Settings → Notifications).
       default: true
       selector:
         boolean: {}
+    recovery_notification:
+      name: Notification on recovery
+      description: >-
+        What happens to the notification when the problem clears (certificates renewed / monitor back online).
+      default: keep
+      selector:
+        select:
+          mode: dropdown
+          options:
+            - label: Keep until dismissed manually
+              value: keep
+            - label: Mark as resolved, keep until dismissed manually
+              value: resolve
+            - label: Dismiss automatically
+              value: dismiss
     notification_title:
       name: Notification title
       default: "⚠️ Истекает mTLS-сертификат Homelab"
@@ -78,6 +93,13 @@ variables:
   enable_persistent_notification: !input enable_persistent_notification
   enable_stale_alert: !input enable_stale_alert
   notification_title: !input notification_title
+  recovery_notification: !input recovery_notification
+  stale_duration: !input stale_duration
+  stale_duration_sec: >-
+    {{ (stale_duration.days | default(0) | int(0)) * 86400
+       + (stale_duration.hours | default(0) | int(0)) * 3600
+       + (stale_duration.minutes | default(0) | int(0)) * 60
+       + (stale_duration.seconds | default(0) | int(0)) }}
   reminder_min_active_sec: 3600
 
 triggers:
@@ -99,6 +121,7 @@ triggers:
   - trigger: state
     id: recovered
     entity_id: !input cert_problem_sensor
+    from: "on"
     to: "off"
     for:
       minutes: 1
@@ -121,31 +144,66 @@ triggers:
 
 actions:
   - choose:
-      - alias: Recovered — dismiss expiry notification
+      - alias: Recovered — handle expiry notification (no Telegram message)
         conditions:
           - condition: template
-            value_template: "{{ trigger.id is defined and trigger.id == 'recovered' }}"
+            value_template: >-
+              {{ trigger.id is defined and trigger.id == 'recovered'
+                 and enable_persistent_notification and recovery_notification != 'keep' }}
         sequence:
-          - if:
-              - condition: template
-                value_template: "{{ enable_persistent_notification }}"
-            then:
-              - action: persistent_notification.dismiss
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ recovery_notification == 'dismiss' }}"
+                sequence:
+                  - action: persistent_notification.dismiss
+                    data:
+                      notification_id: homelab_certs_expiring
+            default:
+              - action: persistent_notification.create
                 data:
                   notification_id: homelab_certs_expiring
+                  title: "✅ Сертификаты Homelab в норме"
+                  message: >-
+                    {%- set all_certs = state_attr(cert_problem_sensor, 'all_certs') or {} -%}
+                    {%- set ns = namespace(lines=['Проблема устранена ' ~ now().strftime('%d.%m.%Y %H:%M') ~ '. Текущие сроки:']) -%}
+                    {%- for slug, c in all_certs.items() | sort -%}
+                      {%- set ns.lines = ns.lines + ['• ' ~ c.name ~ ': ' ~ (c.days_left ~ ' д.' if c.days_left is not none else 'нет данных')] -%}
+                    {%- endfor -%}
+                    {{ ns.lines | join('\n') }}
 
-      - alias: Monitor back online — dismiss stale notification
+      - alias: Monitor back online — handle stale notification (no Telegram message)
         conditions:
           - condition: template
-            value_template: "{{ trigger.id is defined and trigger.id == 'monitor_back' }}"
+            value_template: >-
+              {{ trigger.id is defined and trigger.id == 'monitor_back'
+                 and enable_persistent_notification and recovery_notification != 'keep' }}
         sequence:
-          - if:
-              - condition: template
-                value_template: "{{ enable_persistent_notification }}"
-            then:
-              - action: persistent_notification.dismiss
-                data:
-                  notification_id: homelab_certs_monitor_stale
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ recovery_notification == 'dismiss' }}"
+                sequence:
+                  - action: persistent_notification.dismiss
+                    data:
+                      notification_id: homelab_certs_monitor_stale
+              - alias: Only mark resolved if a stale alert was actually raised (not on every HA restart)
+                conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ enable_stale_alert
+                         and trigger.from_state is not none and trigger.to_state is not none
+                         and (as_timestamp(trigger.to_state.last_changed)
+                              - as_timestamp(trigger.from_state.last_changed)) >= stale_duration_sec | float(0) }}
+                sequence:
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: homelab_certs_monitor_stale
+                      title: "✅ Монитор сертификатов Homelab снова на связи"
+                      message: >-
+                        Монитор вернулся {{ now().strftime('%d.%m.%Y %H:%M') }}
+                        (был недоступен с {{ as_local(trigger.from_state.last_changed).strftime('%d.%m.%Y %H:%M') }}).
+                        Текущее состояние: {{ 'есть проблемы с сертификатами' if trigger.to_state.state == 'on' else 'сертификаты в норме' }}.
 
       - alias: Monitor unavailable — dead-man switch
         conditions:

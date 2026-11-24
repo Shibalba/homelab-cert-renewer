@@ -767,6 +767,7 @@ def test_blueprint_metadata_and_inputs() -> None:
         'for_duration',
         'reminder_time',
         'enable_persistent_notification',
+        'recovery_notification',
         'notification_title',
         'enable_stale_alert',
         'stale_duration',
@@ -808,6 +809,13 @@ def test_blueprint_triggers_and_manual_run_branch() -> None:
     assert set(by_id['expiring']['not_from']) == {'unavailable', 'unknown'}
     assert by_id['escalated']['attribute'] == 'expiring_count'
     assert set(by_id['stale']['to']) == {'unavailable', 'unknown'}
+    # Only a real on -> off counts as recovery (HA restart unknown -> off must not touch notifications).
+    assert (by_id['recovered']['from'], by_id['recovered']['to']) == ('on', 'off')
+
+    recovery_input = data['blueprint']['input']['recovery_notification']  # type: ignore[index]
+    assert recovery_input['default'] == 'keep'
+    options = {opt['value'] for opt in recovery_input['selector']['select']['options']}
+    assert options == {'keep', 'resolve', 'dismiss'}
 
     text = BLUEPRINT_PATH.read_text(encoding='utf-8')
     # Manual "Run actions" passes trigger={'platform': None}, so the branch must key off a missing trigger.id.
